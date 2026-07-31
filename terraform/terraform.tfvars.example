@@ -1,0 +1,6 @@
+environment = "prod"
+aws_region  = "ap-south-1"
+db_password      = "CHANGE_ME_strong_password_123!"
+jwt_secret       = "CHANGE_ME_jwt_secret_2026_prod"
+jwt_refresh_secret = "CHANGE_ME_jwt_refresh_secret_2026_prod"
+ecr_repository_url = ""

@@ -1,0 +1,55 @@
+name: Deploy to ECS
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Docker Image"]
+    types: [completed]
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: saarthi-bank-prod-backend
+  ECS_CLUSTER: saarthi-bank-prod-cluster
+  ECS_SERVICE: saarthi-bank-prod-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update ECS task definition
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $ECS_SERVICE --region $AWS_REGION)
+          NEW_IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ github.sha }}"
+          echo "$TASK_DEF" | jq --arg IMAGE "$NEW_IMAGE" \
+            '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > new-task-def.json
+          NEW_TASK_DEF=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --region $AWS_REGION | jq '.taskDefinition.taskDefinitionArn' -r)
+          echo "NEW_TASK_DEF=$NEW_TASK_DEF" >> $GITHUB_ENV
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition $NEW_TASK_DEF \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Wait for service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Deployment complete!"
