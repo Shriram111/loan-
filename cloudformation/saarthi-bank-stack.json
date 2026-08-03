@@ -8,10 +8,7 @@
       "Default": "production",
       "AllowedValues": ["production", "staging", "development"]
     },
-    "VpcCidr": {
-      "Type": "String",
-      "Default": "10.0.0.0/16"
-    },
+    "VpcCidr": { "Type": "String", "Default": "10.0.0.0/16" },
     "PublicSubnet1Cidr": { "Type": "String", "Default": "10.0.1.0/24" },
     "PublicSubnet2Cidr": { "Type": "String", "Default": "10.0.2.0/24" },
     "PrivateSubnet1Cidr": { "Type": "String", "Default": "10.0.3.0/24" },
@@ -20,7 +17,7 @@
     "AZ2": { "Type": "AWS::EC2::AvailabilityZone::Name", "Default": "ap-south-1b" },
     "BackendImageUri": {
       "Type": "String",
-      "Description": "ECR image URI for backend (e.g. 123456789.dkr.ecr.ap-south-1.amazonaws.com/saarthi-bank-prod-backend:latest)"
+      "Description": "ECR image URI for backend"
     },
     "MongoDbImage": { "Type": "String", "Default": "mongo:7" },
     "BackendCpu": { "Type": "String", "Default": "512", "AllowedValues": ["256","512","1024","2048","4096"] },
@@ -370,7 +367,7 @@
       "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace",
       "Properties": {
         "Name": "saarthi-cluster.local",
-        "Description": "Service discovery namespace for Saarthi Bank services",
+        "Description": "Service discovery namespace for Saarthi Bank",
         "Vpc": { "Ref": "VPC" }
       }
     },
@@ -382,9 +379,6 @@
         "ClusterSettings": [
           { "Name": "containerInsights", "Value": "enabled" }
         ],
-        "Configuration": {
-          "ExecuteCommandConfiguration": { "Logging": "DEFAULT" }
-        },
         "ServiceConnectDefaults": {
           "Namespace": { "Fn::GetAtt": ["ServiceDiscoveryNamespace", "Arn"] }
         }
@@ -489,14 +483,6 @@
         "ServiceConnectConfiguration": {
           "Enabled": true,
           "Namespace": { "Fn::GetAtt": ["ServiceDiscoveryNamespace", "Arn"] },
-          "LogConfiguration": {
-            "LogDriver": "awslogs",
-            "Options": {
-              "awslogs-group": { "Ref": "MongoLogGroup" },
-              "awslogs-region": { "Ref": "AWS::Region" },
-              "awslogs-stream-prefix": "connect"
-            }
-          },
           "Services": [
             {
               "DiscoveryName": "mongo",
@@ -595,78 +581,73 @@
           "DefaultRootObject": "index.html",
           "PriceClass": { "Ref": "CloudFrontPriceClass" },
           "HttpVersion": "http2and3",
-          "Aliases": { "Quantity": 0 },
-          "Origins": {
-            "Quantity": 2,
-            "Items": [
-              {
-                "Id": "S3-saarthi-bank-prod-frontend",
-                "DomainName": { "Fn::GetAtt": ["FrontendBucket", "RegionalDomainName"] },
-                "OriginPath": "",
-                "CustomHeaders": { "Quantity": 0 },
-                "S3OriginConfig": { "OriginAccessIdentity": "" },
-                "ConnectionAttempts": 3,
-                "ConnectionTimeout": 10,
-                "OriginShield": { "Enabled": false }
-              },
-              {
-                "Id": "ALB-saarthi-backend",
-                "DomainName": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] },
-                "OriginPath": "",
-                "CustomHeaders": { "Quantity": 0 },
-                "CustomOriginConfig": {
-                  "HTTPPort": 80,
-                  "HTTPSPort": 443,
-                  "OriginProtocolPolicy": "http-only",
-                  "OriginSslProtocols": { "Quantity": 1, "Items": ["TLSv1.2"] },
-                  "OriginReadTimeout": 60,
-                  "OriginKeepaliveTimeout": 5
-                },
-                "ConnectionAttempts": 3,
-                "ConnectionTimeout": 10,
-                "OriginShield": { "Enabled": false }
+          "Origins": [
+            {
+              "Id": "S3-saarthi-bank-prod-frontend",
+              "DomainName": { "Fn::GetAtt": ["FrontendBucket", "RegionalDomainName"] },
+              "S3OriginConfig": { "OriginAccessIdentity": "" }
+            },
+            {
+              "Id": "ALB-saarthi-backend",
+              "DomainName": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] },
+              "CustomOriginConfig": {
+                "HTTPPort": 80,
+                "HTTPSPort": 443,
+                "OriginProtocolPolicy": "http-only",
+                "OriginSslProtocols": ["TLSv1.2"],
+                "OriginReadTimeout": 60,
+                "OriginKeepaliveTimeout": 5
               }
-            ]
-          },
+            }
+          ],
           "DefaultCacheBehavior": {
             "TargetOriginId": "S3-saarthi-bank-prod-frontend",
             "ViewerProtocolPolicy": "redirect-to-https",
-            "AllowedMethods": { "Quantity": 2, "Items": ["HEAD","GET"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD","GET"] } },
+            "AllowedMethods": ["HEAD", "GET"],
+            "CachedMethods": ["HEAD", "GET"],
             "Compress": true,
-            "ForwardedValues": { "QueryString": false, "Cookies": { "Forward": "none" }, "Headers": { "Quantity": 0 }, "QueryStringCacheKeys": { "Quantity": 0 } },
+            "ForwardedValues": {
+              "QueryString": false,
+              "Cookies": { "Forward": "none" }
+            },
             "MinTTL": 0,
             "DefaultTTL": 86400,
             "MaxTTL": 31536000
           },
-          "CacheBehaviors": {
-            "Quantity": 1,
-            "Items": [
-              {
-                "PathPattern": "/api/*",
-                "TargetOriginId": "ALB-saarthi-backend",
-                "ViewerProtocolPolicy": "redirect-to-https",
-                "AllowedMethods": { "Quantity": 7, "Items": ["HEAD","DELETE","GET","OPTIONS","PATCH","POST","PUT"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD","GET"] } },
-                "Compress": true,
-                "ForwardedValues": {
-                  "QueryString": true,
-                  "Cookies": { "Forward": "all" },
-                  "Headers": { "Quantity": 5, "Items": ["Authorization","Content-Type","Origin","Referer","Access-Control-Request-Headers"] },
-                  "QueryStringCacheKeys": { "Quantity": 0 }
-                },
-                "MinTTL": 0,
-                "DefaultTTL": 0,
-                "MaxTTL": 0
-              }
-            ]
+          "CacheBehaviors": [
+            {
+              "PathPattern": "/api/*",
+              "TargetOriginId": "ALB-saarthi-backend",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": ["HEAD", "DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"],
+              "CachedMethods": ["HEAD", "GET"],
+              "Compress": true,
+              "ForwardedValues": {
+                "QueryString": true,
+                "Cookies": { "Forward": "all" },
+                "Headers": ["Authorization", "Content-Type", "Origin", "Referer", "Access-Control-Request-Headers"]
+              },
+              "MinTTL": 0,
+              "DefaultTTL": 0,
+              "MaxTTL": 0
+            }
+          ],
+          "CustomErrorResponses": [
+            {
+              "ErrorCode": 404,
+              "ResponsePagePath": "/index.html",
+              "ResponseCode": "200",
+              "ErrorCachingMinTTL": 10
+            }
+          ],
+          "Restrictions": {
+            "GeoRestriction": { "RestrictionType": "none" }
           },
-          "CustomErrorResponses": {
-            "Quantity": 1,
-            "Items": [
-              { "ErrorCode": 404, "ResponsePagePath": "/index.html", "ResponseCode": "200", "ErrorCachingMinTTL": 10 }
-            ]
-          },
-          "Restrictions": { "GeoRestriction": { "RestrictionType": "none" } },
-          "ViewerCertificate": { "CloudFrontDefaultCertificate": true, "MinimumProtocolVersion": "TLSv1.2_2021", "SslSupportMethod": "sni-only" }
+          "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true,
+            "MinimumProtocolVersion": "TLSv1.2_2021",
+            "SslSupportMethod": "sni-only"
+          }
         }
       }
     },
