@@ -487,7 +487,6 @@
             {
               "DiscoveryName": "mongo",
               "PortName": "mongo",
-              "IngressPortOverride": 27017,
               "ClientAliases": [
                 { "Port": 27017 }
               ]
