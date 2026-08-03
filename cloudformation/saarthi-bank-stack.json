@@ -488,9 +488,6 @@
               "DiscoveryName": "mongo",
               "PortName": "mongo",
               "ClientAuth": { "DiscoveryType": "NONE" },
-              "DnsConfiguration": [
-                { "RoutingPolicy": "MULTIVALUE", "DnsType": "A" }
-              ],
               "IngressPortOverride": 27017
             }
           ]
