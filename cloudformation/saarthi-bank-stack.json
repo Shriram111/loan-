@@ -458,7 +458,7 @@
             "Name": "mongo",
             "Image": { "Ref": "MongoDbImage" },
             "Essential": true,
-            "PortMappings": [{ "ContainerPort": 27017, "HostPort": 27017, "Protocol": "tcp" }],
+            "PortMappings": [{ "ContainerPort": 27017, "HostPort": 27017, "Protocol": "tcp", "Name": "mongo" }],
             "LogConfiguration": {
               "LogDriver": "awslogs",
               "Options": {
