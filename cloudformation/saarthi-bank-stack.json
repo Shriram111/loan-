@@ -592,7 +592,6 @@
                 "HTTPPort": 80,
                 "HTTPSPort": 443,
                 "OriginProtocolPolicy": "http-only",
-                "OriginSslProtocols": ["TLSv1.2"],
                 "OriginReadTimeout": 60,
                 "OriginKeepaliveTimeout": 5
               }
