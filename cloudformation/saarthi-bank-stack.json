@@ -643,8 +643,7 @@
           },
           "ViewerCertificate": {
             "CloudFrontDefaultCertificate": true,
-            "MinimumProtocolVersion": "TLSv1.2_2021",
-            "SslSupportMethod": "sni-only"
+            "MinimumProtocolVersion": "TLSv1.2_2021"
           }
         },
         "Tags": [{ "Key": "Name", "Value": { "Fn::Sub": "${StackPrefix}-cdn" } }]
