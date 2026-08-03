@@ -419,7 +419,7 @@
               { "Name": "PORT", "Value": "5000" },
               { "Name": "CLIENT_URL", "Value": { "Fn::Sub": "https://${CloudFrontDistribution.DomainName}" } },
               { "Name": "CORS_ORIGIN", "Value": { "Fn::Sub": "https://${CloudFrontDistribution.DomainName}" } },
-              { "Name": "MONGODB_URI", "Value": { "Fn::Sub": "mongodb://mongo.${ServiceDiscoveryNamespace.Name}:27017/saarthi-bank" } },
+              { "Name": "MONGODB_URI", "Value": "mongodb://mongo.saarthi-cluster.local:27017/saarthi-bank" },
               { "Name": "JWT_SECRET", "Value": { "Ref": "JwtSecret" } },
               { "Name": "JWT_REFRESH_SECRET", "Value": { "Ref": "JwtRefreshSecret" } },
               { "Name": "JWT_EXPIRE", "Value": { "Ref": "JwtExpire" } },
@@ -668,7 +668,7 @@
             "Command": ["sh", "-c", "node utils/seed.js && node utils/seedLoans.js"],
             "Environment": [
               { "Name": "NODE_ENV", "Value": { "Ref": "Environment" } },
-              { "Name": "MONGODB_URI", "Value": { "Fn::Sub": "mongodb://mongo.${ServiceDiscoveryNamespace.Name}:27017/saarthi-bank" } },
+              { "Name": "MONGODB_URI", "Value": "mongodb://mongo.saarthi-cluster.local:27017/saarthi-bank" },
               { "Name": "JWT_SECRET", "Value": { "Ref": "JwtSecret" } },
               { "Name": "JWT_REFRESH_SECRET", "Value": { "Ref": "JwtRefreshSecret" } }
             ],
