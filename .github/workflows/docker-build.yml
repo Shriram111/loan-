@@ -1,4 +1,4 @@
-name: Build & Push Docker Image
+name: Build & Deploy
 
 on:
   push:
@@ -7,9 +7,12 @@ on:
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: saarthi-bank-prod-backend
+  ECS_CLUSTER: saarthi-cluster
+  ECS_SERVICE: saarthi-backend
+  S3_BUCKET: saarthi-bank-prod-frontend
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +29,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push backend image
+        id: build-backend
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -35,10 +39,40 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Build and push frontend to S3
+      - name: Deploy backend to ECS
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition saarthi-backend --region $AWS_REGION)
+          NEW_IMAGE="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${{ github.sha }}"
+          echo "$TASK_DEF" | jq --arg IMAGE "$NEW_IMAGE" \
+            '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > new-task-def.json
+          NEW_TASK_DEF=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json --region $AWS_REGION | jq '.taskDefinition.taskDefinitionArn' -r)
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition $NEW_TASK_DEF \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+      - name: Build and deploy frontend to S3
         run: |
           cd frontend
+          echo "VITE_API_URL=/api" > .env.production
           npm ci
           npm run build
-          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET }} --delete
-          aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+          aws s3 sync dist/ s3://${{ env.S3_BUCKET }} --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudfront list-distributions --query "DistributionList.Items[?Origins.Items[?DomainName=='${S3_BUCKET}.s3.ap-south-1.amazonaws.com']].Id" --output text --region $AWS_REGION | head -1)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --region $AWS_REGION
+          fi
+
+      - name: Wait for ECS service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --region $AWS_REGION
+          echo "Backend deployment complete!"
