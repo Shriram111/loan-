@@ -497,10 +497,7 @@
             "SecurityGroups": [ { "Ref": "MongoSecurityGroup" } ],
             "AssignPublicIp": "DISABLED"
           }
-        },
-        "PortConfigurations": [
-          { "ContainerPort": 27017, "Protocol": "tcp", "Name": "mongo" }
-        ]
+        }
       }
     },
 
