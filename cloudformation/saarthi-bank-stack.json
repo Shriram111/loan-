@@ -1,0 +1,787 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Saarthi Bank - Loan Audit & Verification Platform | Full-stack ECS Fargate with CloudFront, ALB, MongoDB, ECR",
+
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "Default": "production",
+      "AllowedValues": ["production", "staging", "development"]
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.0.0.0/16"
+    },
+    "PublicSubnet1Cidr": { "Type": "String", "Default": "10.0.1.0/24" },
+    "PublicSubnet2Cidr": { "Type": "String", "Default": "10.0.2.0/24" },
+    "PrivateSubnet1Cidr": { "Type": "String", "Default": "10.0.3.0/24" },
+    "PrivateSubnet2Cidr": { "Type": "String", "Default": "10.0.4.0/24" },
+    "AZ1": { "Type": "AWS::EC2::AvailabilityZone::Name", "Default": "ap-south-1a" },
+    "AZ2": { "Type": "AWS::EC2::AvailabilityZone::Name", "Default": "ap-south-1b" },
+    "BackendImageUri": {
+      "Type": "String",
+      "Description": "ECR image URI for backend (e.g. 123456789.dkr.ecr.ap-south-1.amazonaws.com/saarthi-bank-prod-backend:latest)"
+    },
+    "MongoDbImage": { "Type": "String", "Default": "mongo:7" },
+    "BackendCpu": { "Type": "String", "Default": "512", "AllowedValues": ["256","512","1024","2048","4096"] },
+    "BackendMemory": { "Type": "String", "Default": "1024", "AllowedValues": ["512","1024","2048","4096","8192","16384"] },
+    "MongoCpu": { "Type": "String", "Default": "256", "AllowedValues": ["256","512","1024","2048"] },
+    "MongoMemory": { "Type": "String", "Default": "512", "AllowedValues": ["512","1024","2048","4096"] },
+    "BackendDesiredCount": { "Type": "Number", "Default": 1, "MinValue": 1 },
+    "JwtSecret": { "Type": "String", "Default": "saarthi-prod-jwt-2026-k9mP", "NoEcho": true },
+    "JwtRefreshSecret": { "Type": "String", "Default": "saarthi-prod-refresh-2026-zQ4nR", "NoEcho": true },
+    "JwtExpire": { "Type": "String", "Default": "15m" },
+    "JwtRefreshExpire": { "Type": "String", "Default": "7d" },
+    "CloudFrontPriceClass": {
+      "Type": "String",
+      "Default": "PriceClass_All",
+      "AllowedValues": ["PriceClass_100", "PriceClass_200", "PriceClass_All"]
+    }
+  },
+
+  "Resources": {
+
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": { "Ref": "VpcCidr" },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [{ "Key": "Name", "Value": "saarthi-bank-vpc" }]
+      }
+    },
+
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [{ "Key": "Name", "Value": "saarthi-bank-igw" }]
+      }
+    },
+
+    "IGWAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "InternetGatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": { "Ref": "PublicSubnet1Cidr" },
+        "AvailabilityZone": { "Ref": "AZ1" },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "saarthi-public-1a" }]
+      }
+    },
+
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": { "Ref": "PublicSubnet2Cidr" },
+        "AvailabilityZone": { "Ref": "AZ2" },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "saarthi-public-1b" }]
+      }
+    },
+
+    "PrivateSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": { "Ref": "PrivateSubnet1Cidr" },
+        "AvailabilityZone": { "Ref": "AZ1" },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "saarthi-private-1a" }]
+      }
+    },
+
+    "PrivateSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "CidrBlock": { "Ref": "PrivateSubnet2Cidr" },
+        "AvailabilityZone": { "Ref": "AZ2" },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [{ "Key": "Name", "Value": "saarthi-private-1b" }]
+      }
+    },
+
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "Tags": [{ "Key": "Name", "Value": "saarthi-public-rt" }]
+      }
+    },
+
+    "PublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "IGWAttachment",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "InternetGateway" }
+      }
+    },
+
+    "PublicSubnet1RTAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": { "SubnetId": { "Ref": "PublicSubnet1" }, "RouteTableId": { "Ref": "PublicRouteTable" } }
+    },
+
+    "PublicSubnet2RTAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": { "SubnetId": { "Ref": "PublicSubnet2" }, "RouteTableId": { "Ref": "PublicRouteTable" } }
+    },
+
+    "NATGatewayEIP": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "IGWAttachment",
+      "Properties": { "Domain": "vpc" }
+    },
+
+    "NATGateway": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": ["NATGatewayEIP", "AllocationId"] },
+        "SubnetId": { "Ref": "PublicSubnet1" },
+        "Tags": [{ "Key": "Name", "Value": "saarthi-nat-gw" }]
+      }
+    },
+
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "Tags": [{ "Key": "Name", "Value": "saarthi-private-rt" }]
+      }
+    },
+
+    "PrivateRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTable" },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "NATGateway" }
+      }
+    },
+
+    "PrivateSubnet1RTAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": { "SubnetId": { "Ref": "PrivateSubnet1" }, "RouteTableId": { "Ref": "PrivateRouteTable" } }
+    },
+
+    "PrivateSubnet2RTAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": { "SubnetId": { "Ref": "PrivateSubnet2" }, "RouteTableId": { "Ref": "PrivateRouteTable" } }
+    },
+
+    "ALBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ALB - allows HTTP/HTTPS from internet",
+        "VpcId": { "Ref": "VPC" },
+        "SecurityGroupIngress": [
+          { "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "CidrIp": "0.0.0.0/0" },
+          { "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0" }
+        ],
+        "SecurityGroupEgress": [
+          { "IpProtocol": "-1", "CidrIp": "0.0.0.0/0" }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "saarthi-alb-sg" }]
+      }
+    },
+
+    "ECSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ECS tasks - allows traffic from ALB on port 5000",
+        "VpcId": { "Ref": "VPC" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp", "FromPort": 5000, "ToPort": 5000,
+            "SourceSecurityGroupId": { "Ref": "ALBSecurityGroup" }
+          }
+        ],
+        "SecurityGroupEgress": [
+          { "IpProtocol": "-1", "CidrIp": "0.0.0.0/0" }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "saarthi-ecs-sg" }]
+      }
+    },
+
+    "MongoSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "MongoDB - allows port 27017 from ECS tasks",
+        "VpcId": { "Ref": "VPC" },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp", "FromPort": 27017, "ToPort": 27017,
+            "SourceSecurityGroupId": { "Ref": "ECSSecurityGroup" }
+          }
+        ],
+        "SecurityGroupEgress": [
+          { "IpProtocol": "-1", "CidrIp": "0.0.0.0/0" }
+        ],
+        "Tags": [{ "Key": "Name", "Value": "saarthi-mongo-sg" }]
+      }
+    },
+
+    "ApplicationLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": "saarthi-alb",
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": [ { "Ref": "PublicSubnet1" }, { "Ref": "PublicSubnet2" } ],
+        "SecurityGroups": [ { "Ref": "ALBSecurityGroup" } ],
+        "Tags": [{ "Key": "Name", "Value": "saarthi-alb" }]
+      }
+    },
+
+    "BackendTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": "saarthi-backend-tg",
+        "Port": 5000,
+        "Protocol": "HTTP",
+        "VpcId": { "Ref": "VPC" },
+        "TargetType": "ip",
+        "HealthCheckEnabled": true,
+        "HealthCheckPath": "/api/health",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 3,
+        "UnhealthyThresholdCount": 3,
+        "Matcher": { "HttpCode": "200" }
+      }
+    },
+
+    "ALBListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": { "Ref": "ApplicationLoadBalancer" },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          { "Type": "forward", "TargetGroupArn": { "Ref": "BackendTargetGroup" } }
+        ]
+      }
+    },
+
+    "ECSExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "saarthi-ecs-execution-role",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            { "Effect": "Allow", "Principal": { "Service": "ecs-tasks.amazonaws.com" }, "Action": "sts:AssumeRole" }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "ECRCloudWatchAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["logs:CreateLogStream","logs:PutLogEvents"],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+
+    "ECSTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "saarthi-ecs-task-role",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            { "Effect": "Allow", "Principal": { "Service": "ecs-tasks.amazonaws.com" }, "Action": "sts:AssumeRole" }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "S3BackendAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+
+    "ECRRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "saarthi-bank-prod-backend",
+        "ImageScanningConfiguration": { "ScanOnPush": true },
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep last 10 images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":10},\"action\":{\"type\":\"expire\"}}]}"
+        }
+      }
+    },
+
+    "BackendLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/ecs/saarthi-backend",
+        "RetentionInDays": 30
+      }
+    },
+
+    "MongoLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/ecs/saarthi-mongo",
+        "RetentionInDays": 30
+      }
+    },
+
+    "ServiceDiscoveryNamespace": {
+      "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace",
+      "Properties": {
+        "Name": "saarthi-cluster.local",
+        "Description": "Service discovery namespace for Saarthi Bank services",
+        "Vpc": { "Ref": "VPC" }
+      }
+    },
+
+    "ECSCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": "saarthi-cluster",
+        "ClusterSettings": [
+          { "Name": "containerInsights", "Value": "enabled" }
+        ],
+        "Configuration": {
+          "ExecuteCommandConfiguration": { "Logging": "DEFAULT" }
+        },
+        "ServiceConnectDefaults": {
+          "Namespace": { "Fn::GetAtt": ["ServiceDiscoveryNamespace", "Arn"] }
+        }
+      }
+    },
+
+    "ECSClusterCapacityProvider": {
+      "Type": "AWS::ECS::ClusterCapacityProviderAssociations",
+      "Properties": {
+        "Cluster": { "Ref": "ECSCluster" },
+        "CapacityProviders": ["FARGATE", "FARGATE_SPOT"],
+        "DefaultCapacityProviderStrategy": [
+          { "CapacityProvider": "FARGATE", "Weight": 1, "Base": 0 }
+        ]
+      }
+    },
+
+    "BackendTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "saarthi-backend",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "Cpu": { "Ref": "BackendCpu" },
+        "Memory": { "Ref": "BackendMemory" },
+        "ExecutionRoleArn": { "Fn::GetAtt": ["ECSExecutionRole", "Arn"] },
+        "TaskRoleArn": { "Fn::GetAtt": ["ECSTaskRole", "Arn"] },
+        "ContainerDefinitions": [
+          {
+            "Name": "backend",
+            "Image": { "Ref": "BackendImageUri" },
+            "Essential": true,
+            "PortMappings": [{ "ContainerPort": 5000, "HostPort": 5000, "Protocol": "tcp" }],
+            "Environment": [
+              { "Name": "NODE_ENV", "Value": { "Ref": "Environment" } },
+              { "Name": "PORT", "Value": "5000" },
+              { "Name": "CLIENT_URL", "Value": { "Fn::Sub": "https://${CloudFrontDistribution.DomainName}" } },
+              { "Name": "CORS_ORIGIN", "Value": { "Fn::Sub": "https://${CloudFrontDistribution.DomainName}" } },
+              { "Name": "MONGODB_URI", "Value": "mongodb://mongo.saarthi-cluster.local:27017/saarthi-bank" },
+              { "Name": "JWT_SECRET", "Value": { "Ref": "JwtSecret" } },
+              { "Name": "JWT_REFRESH_SECRET", "Value": { "Ref": "JwtRefreshSecret" } },
+              { "Name": "JWT_EXPIRE", "Value": { "Ref": "JwtExpire" } },
+              { "Name": "JWT_REFRESH_EXPIRE", "Value": { "Ref": "JwtRefreshExpire" } }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": { "Ref": "BackendLogGroup" },
+                "awslogs-region": { "Ref": "AWS::Region" },
+                "awslogs-stream-prefix": "backend"
+              }
+            },
+            "HealthCheck": {
+              "Command": ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/api/health || exit 1"],
+              "Interval": 30,
+              "Timeout": 5,
+              "Retries": 3,
+              "StartPeriod": 30
+            }
+          }
+        ]
+      }
+    },
+
+    "MongoTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "saarthi-mongo",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "Cpu": { "Ref": "MongoCpu" },
+        "Memory": { "Ref": "MongoMemory" },
+        "ExecutionRoleArn": { "Fn::GetAtt": ["ECSExecutionRole", "Arn"] },
+        "ContainerDefinitions": [
+          {
+            "Name": "mongo",
+            "Image": { "Ref": "MongoDbImage" },
+            "Essential": true,
+            "PortMappings": [{ "ContainerPort": 27017, "HostPort": 27017, "Protocol": "tcp" }],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": { "Ref": "MongoLogGroup" },
+                "awslogs-region": { "Ref": "AWS::Region" },
+                "awslogs-stream-prefix": "mongo"
+              }
+            }
+          }
+        ]
+      }
+    },
+
+    "MongoService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": "ALBListener",
+      "Properties": {
+        "ServiceName": "saarthi-mongo",
+        "Cluster": { "Ref": "ECSCluster" },
+        "TaskDefinition": { "Ref": "MongoTaskDefinition" },
+        "LaunchType": "FARGATE",
+        "DesiredCount": 1,
+        "ServiceConnectConfiguration": {
+          "Enabled": true,
+          "Namespace": { "Fn::GetAtt": ["ServiceDiscoveryNamespace", "Arn"] },
+          "LogConfiguration": {
+            "LogDriver": "awslogs",
+            "Options": {
+              "awslogs-group": { "Ref": "MongoLogGroup" },
+              "awslogs-region": { "Ref": "AWS::Region" },
+              "awslogs-stream-prefix": "connect"
+            }
+          },
+          "Services": [
+            {
+              "DiscoveryName": "mongo",
+              "PortName": "mongo",
+              "ClientAuth": { "DiscoveryType": "NONE" },
+              "DnsConfiguration": [
+                { "RoutingPolicy": "MULTIVALUE", "DnsType": "A" }
+              ],
+              "IngressPortOverride": 27017
+            }
+          ]
+        },
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": [ { "Ref": "PrivateSubnet1" }, { "Ref": "PrivateSubnet2" } ],
+            "SecurityGroups": [ { "Ref": "MongoSecurityGroup" } ],
+            "AssignPublicIp": "DISABLED"
+          }
+        },
+        "PortConfigurations": [
+          { "ContainerPort": 27017, "Protocol": "tcp", "Name": "mongo" }
+        ]
+      }
+    },
+
+    "BackendService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": ["ALBListener", "MongoService"],
+      "Properties": {
+        "ServiceName": "saarthi-backend",
+        "Cluster": { "Ref": "ECSCluster" },
+        "TaskDefinition": { "Ref": "BackendTaskDefinition" },
+        "LaunchType": "FARGATE",
+        "DesiredCount": { "Ref": "BackendDesiredCount" },
+        "HealthCheckGracePeriodSeconds": 60,
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": [ { "Ref": "PrivateSubnet1" }, { "Ref": "PrivateSubnet2" } ],
+            "SecurityGroups": [ { "Ref": "ECSSecurityGroup" } ],
+            "AssignPublicIp": "DISABLED"
+          }
+        },
+        "LoadBalancers": [
+          {
+            "ContainerName": "backend",
+            "ContainerPort": 5000,
+            "TargetGroupArn": { "Ref": "BackendTargetGroup" }
+          }
+        ]
+      }
+    },
+
+    "FrontendBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": "saarthi-bank-prod-frontend",
+        "WebsiteConfiguration": {
+          "IndexDocument": "index.html",
+          "ErrorDocument": "index.html"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": false,
+          "BlockPublicPolicy": false,
+          "IgnorePublicAcls": false,
+          "RestrictPublicBuckets": false
+        },
+        "VersioningConfiguration": { "Status": "Enabled" }
+      }
+    },
+
+    "FrontendBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "FrontendBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "PublicReadGetObject",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": { "Fn::Sub": "${FrontendBucket.Arn}/*" }
+            }
+          ]
+        }
+      }
+    },
+
+    "CloudFrontDistribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": "Saarthi Bank - Frontend + API Proxy",
+          "DefaultRootObject": "index.html",
+          "PriceClass": { "Ref": "CloudFrontPriceClass" },
+          "HttpVersion": "http2and3",
+          "Aliases": { "Quantity": 0 },
+          "Origins": {
+            "Quantity": 2,
+            "Items": [
+              {
+                "Id": "S3-saarthi-bank-prod-frontend",
+                "DomainName": { "Fn::GetAtt": ["FrontendBucket", "RegionalDomainName"] },
+                "OriginPath": "",
+                "CustomHeaders": { "Quantity": 0 },
+                "S3OriginConfig": { "OriginAccessIdentity": "" },
+                "ConnectionAttempts": 3,
+                "ConnectionTimeout": 10,
+                "OriginShield": { "Enabled": false }
+              },
+              {
+                "Id": "ALB-saarthi-backend",
+                "DomainName": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] },
+                "OriginPath": "",
+                "CustomHeaders": { "Quantity": 0 },
+                "CustomOriginConfig": {
+                  "HTTPPort": 80,
+                  "HTTPSPort": 443,
+                  "OriginProtocolPolicy": "http-only",
+                  "OriginSslProtocols": { "Quantity": 1, "Items": ["TLSv1.2"] },
+                  "OriginReadTimeout": 60,
+                  "OriginKeepaliveTimeout": 5
+                },
+                "ConnectionAttempts": 3,
+                "ConnectionTimeout": 10,
+                "OriginShield": { "Enabled": false }
+              }
+            ]
+          },
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "S3-saarthi-bank-prod-frontend",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": { "Quantity": 2, "Items": ["HEAD","GET"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD","GET"] } },
+            "Compress": true,
+            "ForwardedValues": { "QueryString": false, "Cookies": { "Forward": "none" }, "Headers": { "Quantity": 0 }, "QueryStringCacheKeys": { "Quantity": 0 } },
+            "MinTTL": 0,
+            "DefaultTTL": 86400,
+            "MaxTTL": 31536000
+          },
+          "CacheBehaviors": {
+            "Quantity": 1,
+            "Items": [
+              {
+                "PathPattern": "/api/*",
+                "TargetOriginId": "ALB-saarthi-backend",
+                "ViewerProtocolPolicy": "redirect-to-https",
+                "AllowedMethods": { "Quantity": 7, "Items": ["HEAD","DELETE","GET","OPTIONS","PATCH","POST","PUT"], "CachedMethods": { "Quantity": 2, "Items": ["HEAD","GET"] } },
+                "Compress": true,
+                "ForwardedValues": {
+                  "QueryString": true,
+                  "Cookies": { "Forward": "all" },
+                  "Headers": { "Quantity": 5, "Items": ["Authorization","Content-Type","Origin","Referer","Access-Control-Request-Headers"] },
+                  "QueryStringCacheKeys": { "Quantity": 0 }
+                },
+                "MinTTL": 0,
+                "DefaultTTL": 0,
+                "MaxTTL": 0
+              }
+            ]
+          },
+          "CustomErrorResponses": {
+            "Quantity": 1,
+            "Items": [
+              { "ErrorCode": 404, "ResponsePagePath": "/index.html", "ResponseCode": "200", "ErrorCachingMinTTL": 10 }
+            ]
+          },
+          "Restrictions": { "GeoRestriction": { "RestrictionType": "none" } },
+          "ViewerCertificate": { "CloudFrontDefaultCertificate": true, "MinimumProtocolVersion": "TLSv1.2_2021", "SslSupportMethod": "sni-only" }
+        }
+      }
+    },
+
+    "SeedTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "saarthi-seed",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "Cpu": "256",
+        "Memory": "512",
+        "ExecutionRoleArn": { "Fn::GetAtt": ["ECSExecutionRole", "Arn"] },
+        "TaskRoleArn": { "Fn::GetAtt": ["ECSTaskRole", "Arn"] },
+        "ContainerDefinitions": [
+          {
+            "Name": "seed",
+            "Image": { "Ref": "BackendImageUri" },
+            "Essential": true,
+            "Command": ["sh", "-c", "node utils/seed.js && node utils/seedLoans.js"],
+            "Environment": [
+              { "Name": "NODE_ENV", "Value": { "Ref": "Environment" } },
+              { "Name": "MONGODB_URI", "Value": "mongodb://mongo.saarthi-cluster.local:27017/saarthi-bank" },
+              { "Name": "JWT_SECRET", "Value": { "Ref": "JwtSecret" } },
+              { "Name": "JWT_REFRESH_SECRET", "Value": { "Ref": "JwtRefreshSecret" } }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": { "Ref": "BackendLogGroup" },
+                "awslogs-region": { "Ref": "AWS::Region" },
+                "awslogs-stream-prefix": "seed"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+
+  "Outputs": {
+    "VpcId": {
+      "Description": "VPC ID",
+      "Value": { "Ref": "VPC" },
+      "Export": { "Name": "saarthi-vpc-id" }
+    },
+    "PublicSubnet1": {
+      "Description": "Public Subnet 1",
+      "Value": { "Ref": "PublicSubnet1" },
+      "Export": { "Name": "saarthi-public-subnet-1" }
+    },
+    "PublicSubnet2": {
+      "Description": "Public Subnet 2",
+      "Value": { "Ref": "PublicSubnet2" },
+      "Export": { "Name": "saarthi-public-subnet-2" }
+    },
+    "PrivateSubnet1": {
+      "Description": "Private Subnet 1",
+      "Value": { "Ref": "PrivateSubnet1" },
+      "Export": { "Name": "saarthi-private-subnet-1" }
+    },
+    "PrivateSubnet2": {
+      "Description": "Private Subnet 2",
+      "Value": { "Ref": "PrivateSubnet2" },
+      "Export": { "Name": "saarthi-private-subnet-2" }
+    },
+    "ALBSecurityGroupId": {
+      "Description": "ALB Security Group",
+      "Value": { "Ref": "ALBSecurityGroup" },
+      "Export": { "Name": "saarthi-alb-sg" }
+    },
+    "ECSSecurityGroupId": {
+      "Description": "ECS Security Group",
+      "Value": { "Ref": "ECSSecurityGroup" },
+      "Export": { "Name": "saarthi-ecs-sg" }
+    },
+    "MongoSecurityGroupId": {
+      "Description": "MongoDB Security Group",
+      "Value": { "Ref": "MongoSecurityGroup" },
+      "Export": { "Name": "saarthi-mongo-sg" }
+    },
+    "ALBDNSName": {
+      "Description": "ALB DNS Name",
+      "Value": { "Fn::GetAtt": ["ApplicationLoadBalancer", "DNSName"] },
+      "Export": { "Name": "saarthi-alb-dns" }
+    },
+    "ECSClusterArn": {
+      "Description": "ECS Cluster ARN",
+      "Value": { "Fn::GetAtt": ["ECSCluster", "Arn"] },
+      "Export": { "Name": "saarthi-ecs-cluster-arn" }
+    },
+    "ECRRepositoryUri": {
+      "Description": "ECR Repository URI",
+      "Value": { "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/saarthi-bank-prod-backend" },
+      "Export": { "Name": "saarthi-ecr-uri" }
+    },
+    "CloudFrontDomainName": {
+      "Description": "CloudFront Domain (Frontend URL)",
+      "Value": { "Fn::GetAtt": ["CloudFrontDistribution", "DomainName"] },
+      "Export": { "Name": "saarthi-cf-domain" }
+    },
+    "CloudFrontDistributionId": {
+      "Description": "CloudFront Distribution ID",
+      "Value": { "Ref": "CloudFrontDistribution" },
+      "Export": { "Name": "saarthi-cf-distribution-id" }
+    },
+    "FrontendBucketName": {
+      "Description": "S3 Frontend Bucket",
+      "Value": { "Ref": "FrontendBucket" },
+      "Export": { "Name": "saarthi-frontend-bucket" }
+    },
+    "SeedTaskDefinitionArn": {
+      "Description": "Seed Task Def ARN (run manually after deploy)",
+      "Value": { "Ref": "SeedTaskDefinition" },
+      "Export": { "Name": "saarthi-seed-task-def" }
+    }
+  }
+}
